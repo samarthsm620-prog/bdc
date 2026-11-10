@@ -1,0 +1,62 @@
+// Mirrors clinic-knowledge.json because Pages Functions does not support JSON import attributes at runtime.
+const clinicKnowledge = {
+  clinic: {
+    name: 'Bhoomika Dental Clinic',
+    doctor: 'Dr. Lata H. Teredal, BDS',
+    location: 'TMC Complex, Badami',
+    phone: '+91 9481731482',
+    hours: ['10:30 AM–2:30 PM', '5:00 PM–7:30 PM'],
+    freeConsultation: 'Mondays, 10:30 AM–2:00 PM'
+  },
+  specialties: {
+    'infected pulp': 'Root Canal Treatment (Endodontics)',
+    toothache: 'Root Canal Treatment (Endodontics)',
+    'crooked teeth': 'Orthodontic Braces Treatment',
+    braces: 'Orthodontic Braces Treatment',
+    'missing tooth': 'Implants, Dentures, Crowns & Bridges',
+    dentures: 'Implants, Dentures, Crowns & Bridges',
+    cleaning: 'Teeth Scaling & Bleaching',
+    cavity: 'Dental Filling',
+    'wisdom tooth': 'Extraction & Impaction Surgery'
+  },
+  assistantRules: [
+    'Give general guidance only and never diagnose.',
+    'For severe pain, facial swelling, uncontrolled bleeding, airway difficulty, or a knocked-out tooth, recommend urgent clinical contact.',
+    'Answer in the language selected by the user when possible.',
+    "Use the clinic's actual hours, address, phone number, and free Monday consultation window."
+  ]
+};
+
+const clinicContext = `You are the Bhoomika Dental Clinic voice assistant. Use the verified clinic knowledge below as your source of truth. Give general guidance only and never diagnose. For severe pain, facial swelling, uncontrolled bleeding, airway difficulty, or a knocked-out tooth, recommend urgent contact with the clinic. Answer in the requested language when possible, keep responses concise and helpful, and direct appointment requests to the website booking form or clinic phone.
+
+Verified clinic knowledge:
+${JSON.stringify(clinicKnowledge, null, 2)}`;
+
+export async function onRequestPost({ request, env }) {
+  if (!env.GEMINI_API_KEY) {
+    return Response.json({ error: 'Gemini proxy is not configured.' }, { status: 503 });
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: 'Invalid JSON.' }, { status: 400 });
+  }
+  const prompt = String(body.prompt || '').slice(0, 4000);
+  const language = String(body.language || 'English').slice(0, 32);
+  if (!prompt) return Response.json({ error: 'Prompt required.' }, { status: 400 });
+
+  const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${env.GEMINI_API_KEY}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: clinicContext }] },
+      contents: [{ role: 'user', parts: [{ text: `Respond in ${language}. User says: ${prompt}` }] }],
+      generationConfig: { temperature: 0.3, maxOutputTokens: 240 }
+    })
+  });
+  const data = await upstream.json();
+  if (!upstream.ok) return Response.json({ error: 'Gemini request failed.' }, { status: 502 });
+  const text = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join(' ').trim();
+  return Response.json({ text: text || 'Please call the clinic so our team can guide you.' });
+}
